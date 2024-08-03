@@ -1,0 +1,59 @@
+ESP32ULP GAS  ulp_counter.ulp.pS 			page 1
+
+
+   1              	    .global entry
+   2              	.text
+   3              	.bss
+   4              	entry.previous_state:
+   5 0000 00000000 	    .space 4
+   6              	.text
+   7              	.bss
+   8              	entry.current_state:
+   9 0004 00000000 	    .space 4
+  10              	.text
+  11              	entry:
+  12 0000 12008072 	 move r2,1
+  13 0004 03008072 	 move r3,entry.previous_state
+  14 0008 0E000068 	 st r2,r3,0
+  15 000c 02008072 	 move r2,tick_count
+  16 0010 01008072 	 move r1,0
+  17 0014 09000068 	 st r1,r2,0
+  18 0018 80000080 	 jump L.3
+  19              	L.2:
+  20 001c 09014829 	 reg_rd 265,18,18
+  21 0020 02008070 	 move r2,r0
+  22 0024 13008072 	 move r3,entry.current_state
+  23 0028 0E000068 	 st r2,r3,0
+  24 002c 02008072 	 move r2,entry.previous_state
+  25 0030 0A0000D0 	 ld r2,r2,0
+  26 0034 11008072 	 move r1,1
+  27 0038 1A002070 	 sub r2,r2,r1 #{ if r2!=r1 goto L.5
+  28 003c 48004080 	 jump 1f, eq
+  29 0040 1A000070 	 add r2,r2,r1
+  30 0044 70000080 	 jump L.5
+  31              	1:
+  32 0048 1A000070 	 add r2,r2,r1 #}
+  33 004c 12008072 	 move r2,entry.current_state
+  34 0050 0A0000D0 	 ld r2,r2,0
+  35 0054 2A008070 	 move r2,r2 #{ if r2 goto L.5
+  36 0058 60004080 	 jump 1f, eq
+  37 005c 70000080 	 jump L.5
+  38              	1: #}
+  39 0060 02008072 	 move r2,tick_count
+  40 0064 090000D0 	 ld r1,r2,0
+  41 0068 15000072 	 add r1,r1,1
+  42 006c 09000068 	 st r1,r2,0
+  43              	L.5:
+  44 0070 12008072 	 move r2,entry.current_state
+  45 0074 0A0000D0 	 ld r2,r2,0
+  46 0078 03008072 	 move r3,entry.previous_state
+  47 007c 0E000068 	 st r2,r3,0
+  48              	L.3:
+  49 0080 1C000080 	 jump L.2
+  50              	L.1:
+  51              	.bss
+  52              	    .global tick_count
+  53              	tick_count:
+  54 0008 00000000 	    .space 4
+  55              	.text
+  56 0084 000000B0 	halt
