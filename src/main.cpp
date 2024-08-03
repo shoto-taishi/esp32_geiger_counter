@@ -85,10 +85,22 @@ void SetupWifi()
     wifiManager.setConfigPortalTimeout(60);
     wifiManager.setConfigPortalTimeoutCallback(Restart);
     wifiManager.setConnectTimeout(5);
+    if (wifiManager.getWiFiSSID() == "")
+    {
+        Serial.println("No wifi saved, enable config portal");
+        wifiManager.setEnableConfigPortal(true);
+    }
+    else
+    {
+        Serial.print("Saved WiFi SSID: ");
+        Serial.println(wifiManager.getWiFiSSID());
+        Serial.println("Disable config portal");
+        wifiManager.setEnableConfigPortal(false);
+    }
     wifiManager.autoConnect("ESP32_GEIGER_COUNTER", "password");
     if (!WiFi.isConnected())
     {
-        Restart();
+        Serial.println("Wifi Connection Failed");
     }
 }
 
