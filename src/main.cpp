@@ -1,32 +1,31 @@
+#include "constants.h"
+
 #include <Arduino.h>
-#include "esp32/ulp.h"
-#include "driver/rtc_io.h"
-#include "driver/adc.h"
-#include "ulptool.h"
-#include "ulp_main.h"
+#include <HTTPClient.h>
 #include <WiFi.h>
 #include <WiFiManager.h>
-#include <HTTPClient.h>
 #include <ArduinoOTA.h>
 #include <time.h>
 
-extern const uint8_t ulp_main_bin_start[] asm("_binary_ulp_main_bin_start");
-extern const uint8_t ulp_main_bin_end[] asm("_binary_ulp_main_bin_end");
+#include "driver/adc.h"
+#include "driver/rtc_io.h"
+#include "esp32/ulp.h"
+#include "ulp_main.h"
+#include "ulptool.h"
 
-static void init_run_ulp(uint32_t usec);
 void SetupGPIOPins();
 float GetVoltage();
 void Restart();
-void SetupWifi();
 void DeepSleep();
+void SetupWifi();
+void TurnOffOtaSwitch();
+void SetupOta();
+bool OtaSwitchState();
+void RunOtaHandle(long timeout_ms);
 void GetRealTime();
-
-RTC_DATA_ATTR bool ulp_initialized = false;
-
-const gpio_num_t kGeigerCounterInterruptPin = GPIO_NUM_34;
-const adc1_channel_t kSolarPanelAdcChannel = ADC1_CHANNEL_4;        // GPIO32
-const adc1_channel_t kSolarPanelBoostedAdcChannel = ADC1_CHANNEL_5; // GPIO33
-const adc1_channel_t kBatteryAdcChannel = ADC1_CHANNEL_7;           // GPIO35
+String CreatePayload(uint16_t ticks, long duration);
+void SendPayload(String payload);
+static void init_run_ulp(uint32_t usec);
 
 void SetupGPIOPins()
 {
@@ -60,16 +59,20 @@ void Restart()
     ESP.restart();
 }
 
-const char *kServerName = "http://192.168.10.130:8000"; // Replace with your server IP and endpoint
-const char *kApiKey = "your_api_key_here";              // Replace with your actual API key
-const String kIpAddress = "192.168.10.153";
+void DeepSleep(unsigned long wakeup_time_ms)
+{
+    Serial.println("Entering Deep Sleep");
+    esp_sleep_enable_timer_wakeup(1ull * wakeup_time_ms * 1000);
+    esp_deep_sleep_start();
+}
+
 WiFiManager wifiManager;
 void SetupWifi()
 {
-
     // Set Static IP address
     IPAddress ip_address;
     ip_address.fromString(kIpAddress);
+
     // Set Gateway IP address
     IPAddress gateway(192, 168, 10, 1);
     IPAddress subnet(255, 255, 0, 0);
@@ -156,17 +159,49 @@ void SetupOta()
     ArduinoOTA.begin();
 }
 
-const int kUpdateFrequencySeconds = 60 * 1;
-void DeepSleep(unsigned long wakeup_time_ms)
+bool OtaSwitchState()
 {
-    Serial.println("Entering Deep Sleep");
-    esp_sleep_enable_timer_wakeup(1ull * wakeup_time_ms * 1000);
-    esp_deep_sleep_start();
+    HTTPClient http;
+    String endpoint = "/otaswitchstate";
+    String url = String(kServerName) + endpoint;
+    bool otaSwitchState = false;
+
+    http.begin(url);                   // Specify the URL
+    int httpResponseCode = http.GET(); // Make the GET request
+
+    if (httpResponseCode > 0)
+    {
+        // Check for a valid response
+        String payload = http.getString();
+        if (payload == "True" || payload == "true")
+        {
+            otaSwitchState = true;
+        }
+        else if (payload == "False" || payload == "false")
+        {
+            otaSwitchState = false;
+        }
+    }
+    else
+    {
+        Serial.print("Error on HTTP request: ");
+        Serial.println(httpResponseCode);
+    }
+
+    http.end(); // Free resources
+    return otaSwitchState;
 }
 
-// NTP Server and Timezone settings
-const char *ntpServer = "pool.ntp.org";
-const char *tz_info = "JST-9"; // Asia/Tokyo
+void RunOtaHandle(long timeout_ms = 30000)
+{
+    Serial.println("Run OTA Handle");
+    long start_time = millis();
+    while (millis() - start_time <= timeout_ms)
+    {
+        ArduinoOTA.handle();
+    }
+}
+
 struct tm current_timeinfo;
 void GetRealTime()
 {
@@ -180,13 +215,6 @@ void GetRealTime()
     }
 
     Serial.print("Current time: " + String(asctime(&current_timeinfo)));
-}
-
-void GetTime()
-{
-
-    // Initialize NTP
-    configTzTime(tz_info, ntpServer);
 }
 
 String CreatePayload(uint16_t ticks, long duration)
@@ -247,64 +275,16 @@ void SendPayload(String payload)
     http.end();
 }
 
-bool OtaSwitchState()
-{
-    HTTPClient http;
-    String endpoint = "/otaswitchstate";
-    String url = String(kServerName) + endpoint;
-    bool otaSwitchState = false;
-
-    http.begin(url);                   // Specify the URL
-    int httpResponseCode = http.GET(); // Make the GET request
-
-    if (httpResponseCode > 0)
-    {
-        // Check for a valid response
-        String payload = http.getString();
-        if (payload == "True" || payload == "true")
-        {
-            otaSwitchState = true;
-        }
-        else if (payload == "False" || payload == "false")
-        {
-            otaSwitchState = false;
-        }
-    }
-    else
-    {
-        Serial.print("Error on HTTP request: ");
-        Serial.println(httpResponseCode);
-    }
-
-    http.end(); // Free resources
-    return otaSwitchState;
-}
-
-void RunOtaHandle(long timeout_ms = 30000)
-{
-    Serial.println("Run OTA Handle");
-    long start_time = millis();
-    while (millis() - start_time <= timeout_ms)
-    {
-        ArduinoOTA.handle();
-    }
-}
-
 RTC_DATA_ATTR uint16_t previous_tick_count = 0;
 RTC_DATA_ATTR bool first_run_complete = false;
+RTC_DATA_ATTR bool ulp_initialized = false;
+
 void setup()
 {
     unsigned long start_time = millis();
     Serial.begin(115200);
 
     SetupGPIOPins();
-
-    // while (true)
-    // {
-    //     Serial.print(GetVoltage(kSolarPanelAdcChannel));
-    //     Serial.print(",");
-    //     Serial.println(GetVoltage(kSolarPanelBoostedAdcChannel));
-    // }
 
     getLocalTime(&current_timeinfo);
     if (!ulp_initialized)
@@ -353,6 +333,9 @@ void setup()
 }
 
 void loop() {}
+
+extern const uint8_t ulp_main_bin_start[] asm("_binary_ulp_main_bin_start");
+extern const uint8_t ulp_main_bin_end[] asm("_binary_ulp_main_bin_end");
 
 static void init_run_ulp(uint32_t usec)
 {
